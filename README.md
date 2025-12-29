@@ -1,6 +1,6 @@
 # AstraNav-World: World Model for Foresight Control and Consistency
 
-[![Home Page](https://img.shields.io/badge/AstraNav-World-blue.svg)](https://astra-amap.github.io/AstraNav-World.github.io/)
+[![Home Page](https://img.shields.io/badge/Project-AstraNavWorld-blue.svg)](https://astra-amap.github.io/AstraNav-World.github.io/)
 [![arXiv](https://img.shields.io/badge/Arxiv-2512.21714-b31b1b.svg?logo=arXiv)](https://arxiv.org/pdf/2512.21714)
 
 ## 🔥 Latest News!!

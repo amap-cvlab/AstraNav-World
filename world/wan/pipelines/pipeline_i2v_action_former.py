@@ -30,8 +30,6 @@ from diffusers.video_processor import VideoProcessor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
 
-from src.models.action_former.policy import PolicyAutoEncoder
-import copy
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -170,10 +168,6 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         self.vae_scale_factor_spatial = self.vae.config.scale_factor_spatial if getattr(self, "vae", None) else 8
         self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
 
-        # norm = [{"mean": [[-0.00029581971199498956, 0.36787371854635903, 0.014954494843272544, 0.9370392243315385, 0.11111164567436758], [-0.0021755785979208826, 0.49628562756622624, 0.00980841430248885, -0.09450662412121616, 0.12359155946000558], [-0.006537387456843426, 0.4946204086256411, 0.0027271122422390637, -0.07584896793281377, 0.1377745917807692], [-0.011895896263471145, 0.46674328577621704, -0.001475823814134049, -0.050122957131872724, 0.15255900776506587], [-0.01560200421017946, 0.4222075003864933, -0.0035487155837610903, -0.031046077048903088, 0.16974895840349477]], "std": [[0.06789973776063911, 0.41139151773138893, 0.3429346606197173, 0.06426253708659885, 0.31427034201448506], [0.25218543437889096, 0.37416442328924704, 0.2105894962514581, 0.14495055436599424, 0.32911500404911576], [0.35979320234775136, 0.3478510248831022, 0.14209455268732346, 0.16297993201356886, 0.34466324672121856], [0.4189104251465312, 0.3565332171939786, 0.1310259377759319, 0.13597135349889866, 0.35956189580488707], [0.44369571087279847, 0.3881790982497418, 0.13781612528520876, 0.10685504625084495, 0.37541210625714155]], "min": [[-0.4898879826068878, -3.371747652636259e-06, -0.500000110699574, 0.8660253398720004, 0.0], [-0.8396326303482086, -3.3974647521972656e-06, -0.5176382086374279, -0.3660254840604251, 0.0], [-0.9391180276870728, -0.15929907560349102, -0.5176382086374279, -0.500000059133653, 0.0], [-0.9291015863418579, -0.5872985124588013, -0.5176382086374279, -0.5176381337764339, 0.0], [-0.9319192171096802, -0.8579317331314087, -0.5176382086374279, -0.5176381337764339, 0.0]], "max": [[0.5872985124588013, 0.9557347893714905, 0.5000001061835708, 1.0, 1.0], [0.8579317331314087, 1.0390557050704985, 0.5176382086374279, 0.03407419667237266, 1.0], [0.9092906713485659, 0.9378378391265869, 0.5176382086374279, 0.25881910207964864, 1.0], [0.9166926145553589, 0.9238722324371338, 0.5176382086374279, 0.44828776491701233, 1.0], [0.9166924357414246, 0.9437556266784668, 0.5176382086374279, 0.5176381220243294, 1.0]], "cliped_min": [[-0.2156829982995987, -1.1842378646990687e-14, -0.5000000476197127, 0.8660253744433825, 0.0], [-0.5892562866210938, 0.0, -0.5000000231604275, -0.3660254456623787, 0.0], [-0.8049386143684387, 0.0, -0.5000000267263442, -0.5000000329932205, 0.0], [-0.8333336710929871, -0.2156828194856614, -0.5000000193662221, -0.5000000267695113, 0.0], [-0.8333336710929871, -0.5892557501792908, -0.5000000232517577, -0.4999999894331238, 0.0]], "cliped_max": [[0.2156829684972763, 0.8640206348896021, 0.5000000476197127, 1.0, 1.0], [0.5892562866210938, 0.8660314083099395, 0.5000000214928615, 0.03407417595960183, 1.0], [0.8049386143684387, 0.8333348035812378, 0.5000000244794888, 0.15891862945162905, 1.0], [0.8333336710929871, 0.8333350419998169, 0.5000000154900036, 0.24118088154568645, 1.0], [0.8333336710929871, 0.8333346843719482, 0.5000000084622189, 0.2588190533922409, 1.0]]}]
-        self.policy_head = PolicyAutoEncoder(norm_type='mean_std')
-        self.scheduler_waypoints = copy.deepcopy(scheduler)
-
     def _get_t5_prompt_embeds(
         self,
         prompt: Union[str, List[str]] = None,
@@ -269,8 +263,6 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 device=device,
                 dtype=dtype,
             )
-        else:
-            negative_prompt_embeds = torch.zeros_like(prompt_embeds)
 
         if do_classifier_free_guidance and negative_prompt_embeds is None:
             negative_prompt = negative_prompt or ""
@@ -388,11 +380,6 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
             int(height) // self.vae_scale_factor_spatial,
             int(width) // self.vae_scale_factor_spatial,
         )
-        shape_waypoints = (
-            batch_size,
-            5,
-            5,
-        )
         if isinstance(generator, list) and len(generator) != batch_size:
             raise ValueError(
                 f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
@@ -457,10 +444,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         
         if history_frames is not None:
             latents = torch.cat(history_latents + [latents], dim=2)
-
-        latents_waypoints = randn_tensor(shape_waypoints, generator=generator, device=device, dtype=dtype)
-
-        return latents, latents_waypoints
+        return latents
 
     @property
     def guidance_scale(self):
@@ -498,6 +482,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         num_frames: int = 81,
         num_inference_steps: int = 50,
         guidance_scale: float = 5.0,
+        condition_embs: List[torch.Tensor] = None,
         guidance_scale_2: Optional[float] = None,
         num_videos_per_prompt: Optional[int] = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
@@ -512,6 +497,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         ] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
+        stop_timestep = 100,
     ):
         r"""
         The call function to the pipeline for generation.
@@ -614,7 +600,8 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         self._current_timestep = None
         self._interrupt = False
 
-        device = self._execution_device
+        # device = self._execution_device
+        device=self.transformer.device
 
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):
@@ -643,7 +630,6 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
         # 4. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
-        self.scheduler_waypoints.set_timesteps(num_inference_steps, device=device)
         timesteps = self.scheduler.timesteps
 
         # 5. Prepare latent variables
@@ -653,7 +639,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
             else self.transformer_2.config.in_channels
         )
         image = self.video_processor.preprocess(image, height=height, width=width).to(device, dtype=torch.float32)
-        latents, latents_waypoints = self.prepare_latents(
+        latents = self.prepare_latents(
             image,
             batch_size * num_videos_per_prompt,
             num_channels_latents,
@@ -674,8 +660,8 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         num_latents_tokens = latents.shape[-1] * latents.shape[-2] * latents.shape[-3] // 4
         num_tokens_per_frame = latents.shape[-2] * latents.shape[-1] // 4
         mask_latents = torch.ones(latents.shape[0], num_latents_tokens, dtype=torch.float32, device=device)
-        mask_latents[:, :num_tokens_per_frame*(history_len+1)] = 0  # history and front
-        mask_latents[:, -2 * num_tokens_per_frame:] = 0 # left and right
+        mask_latents[:, :num_tokens_per_frame*(history_len+1)] = 0.005  # history
+        mask_latents[:, -2 * num_tokens_per_frame:] = 0.005 # left and right
         # 6. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
@@ -685,8 +671,11 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         else:
             boundary_timestep = None
 
+        out_list = []
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
+                if i == stop_timestep:
+                    self._interrupt = True
                 if self.interrupt:
                     continue
 
@@ -702,7 +691,6 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                     current_guidance_scale = guidance_scale_2
 
                 latent_model_input = latents.to(transformer_dtype)
-                latents_waypoints = latents_waypoints.to(transformer_dtype)
                 if self.config.expand_timesteps:
                     # seq_len: num_latent_frames * latent_height//2 * latent_width//2
                     temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
@@ -713,39 +701,33 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
                 # import pdb; pdb.set_trace()
                 timestep = timestep * mask_latents.to(timestep.device, timestep.dtype)
+                # import pdb; pdb.set_trace()
                 with current_model.cache_context("cond"):
-                    noise_pred, noise_pred_waypoints  = current_model(
+                    noise_pred, out_action = current_model(
                         hidden_states=latent_model_input,
                         timestep=timestep,
                         encoder_hidden_states=prompt_embeds,
-                        hidden_states_waypoints=latents_waypoints,
+                        condition_embs=condition_embs,
                         attention_kwargs=attention_kwargs,
                         return_dict=False,
                     )
-
+                # import pdb; pdb.set_trace()
+                out_list.append(out_action)
+                # out_list.append(torch.cat([out_action[0], out_action[1][:,:,None], out_action[2][:,:,None], out_action[3][:,:,None]], dim=-1))
                 if self.do_classifier_free_guidance:
                     with current_model.cache_context("uncond"):
-                        noise_uncond, noise_uncond_waypoints = current_model(
+                        noise_uncond = current_model(
                             hidden_states=latent_model_input,
                             timestep=timestep,
                             encoder_hidden_states=negative_prompt_embeds,
-                            hidden_states_waypoints=latents_waypoints,
+                            condition_embs=condition_embs,
                             attention_kwargs=attention_kwargs,
                             return_dict=False,
-                        )
+                        )[0]
                     noise_pred = noise_uncond + current_guidance_scale * (noise_pred - noise_uncond)
-                    noise_pred_waypoints = noise_uncond_waypoints + current_guidance_scale * (noise_pred_waypoints - noise_uncond_waypoints)
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
-                latents_waypoints = self.scheduler_waypoints.step(noise_pred_waypoints, t, latents_waypoints, return_dict=False)[0]
-                # if i == len(timesteps) - 1:
-                #     delta = 0 - t
-                # else:
-                #     delta = timesteps[i + 1] - t
-                # latents = latents + noise_pred * (delta / 1000.)
-                # latents_waypoints = latents_waypoints + noise_pred_waypoints * (delta / 1000.)
-
                 latents[:, :, :latent_history_first_frame.shape[2]] = latent_history_first_frame
                 latents[:, :, -latent_left_right.shape[2]:] = latent_left_right
 
@@ -783,8 +765,6 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
             video = self.vae.decode(latents, return_dict=False)[0] # [bf, 3, 1, h, w]
             video = video.squeeze(2).unflatten(0, (latents_std.shape[0],-1)).transpose(1,2) # [b, 3, f, h, w]
             video = self.video_processor.postprocess_video(video, output_type=output_type) # [b, f, h, w, 3]
-
-            waypoints = self.policy_head.decode(latents_waypoints)
         else:
             video = latents
 
@@ -792,6 +772,6 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         self.maybe_free_model_hooks()
 
         if not return_dict:
-            return (video[0],waypoints.cpu())
+            return (video,out_list)
 
         return WanPipelineOutput(frames=video)

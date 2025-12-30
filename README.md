@@ -7,6 +7,7 @@
 * December 29, 2025: We release the inference code of action former for the R2R, RxR, and OVON benchmarks. 
 
 ## Coming Soon
+* vlm, wan, policy: ckpt
 * training of action former
 * inference of diffusion policy
 * training of diffusion policy

@@ -17,7 +17,7 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import FP32LayerNorm
 
-from .transformer import _get_qkv_projections, _get_added_kv_projections, dispatch_attention_fn
+from wan.models.action_former.transformer import _get_qkv_projections, _get_added_kv_projections, dispatch_attention_fn
 
 class LoRALinearLayer(nn.Module):
     def __init__(

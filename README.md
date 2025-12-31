@@ -9,10 +9,16 @@
 * 🌍 Zero-Shot Sim-to-Real: Direct deployment to physical robots without any real-world fine-tuning, powered by generalized spatial understanding.
 
 ### Architecture
-<img src="assets/Architecture.png" width="600">
+
+<div align="center">
+  <img src="assets/Architecture.png" width="600">
+</div>
 
 ### Consistency
-<img src="assets/consis.png" width="600">
+
+<div align="center">
+  <img src="assets/consis.png" width="600">
+</div>
 
 ## 🔥 Latest News!!
 * December 29, 2025: We release the inference code of action former for the R2R, RxR, and OVON benchmarks. 

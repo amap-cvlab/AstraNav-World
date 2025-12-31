@@ -11,13 +11,13 @@
 ### Architecture
 
 <div align="center">
-  <img src="assets/Architecture.png" width="600">
+  <img src="assets/Architecture.png" width="800">
 </div>
 
 ### Consistency
 
 <div align="center">
-  <img src="assets/consis.png" width="600">
+  <img src="assets/consis.png" width="800">
 </div>
 
 ## 🔥 Latest News!!

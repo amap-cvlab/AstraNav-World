@@ -3,6 +3,17 @@
 [![Home Page](https://img.shields.io/badge/Project-AstraNavWorld-blue.svg)](https://astra-amap.github.io/AstraNav-World.github.io/)
 [![arXiv](https://img.shields.io/badge/Arxiv-2512.21714-b31b1b.svg?logo=arXiv)](https://arxiv.org/pdf/2512.21714)
 
+## ✨ Core Highlights
+* 🧠 VLM-Wan Symbiosis: Combines Qwen2.5-VL reasoning with Wan2.2 physical priors to enable robust long-horizon world modeling.
+* 🔄 Bidirectional Consistency: Jointly couples vision and action to eliminate cumulative errors and "physical hallucinations."
+* 🌍 Zero-Shot Sim-to-Real: Direct deployment to physical robots without any real-world fine-tuning, powered by generalized spatial understanding.
+
+### Architecture
+<img src="assets/Architecture.png" width="600">
+
+### Consistency
+<img src="assets/consis.png" width="600">
+
 ## 🔥 Latest News!!
 * December 29, 2025: We release the inference code of action former for the R2R, RxR, and OVON benchmarks. 
 

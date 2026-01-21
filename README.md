@@ -11,20 +11,21 @@
 ### Architecture
 
 <div align="center">
-  <img src="assets/Architecture.png" width="800">
+  <img src="assets/Architecture.png" width="600">
 </div>
 
 ### Consistency
 
 <div align="center">
-  <img src="assets/consis.png" width="800">
+  <img src="assets/consis.png" width="600">
 </div>
 
+
 ## 🔥 Latest News!!
+* January 21, 2026: We release the inference checkpoints of action former.
 * December 29, 2025: We release the inference code of action former for the R2R, RxR, and OVON benchmarks. 
 
 ## Coming Soon
-* vlm, wan, policy: ckpt
 * training of action former
 * inference of diffusion policy
 * training of diffusion policy
@@ -63,6 +64,11 @@ pip install -e .
 cd habitat-baselines
 pip install -e .
 ```
+### 🎁 Model
+| Models        |                       Download Link                                           |
+|---------------|-------------------------------------------------------------------------------|
+| Action-Former | [ModelScope](https://modelscope.ai/models/chongchongjj/AstraNav_World_ActionFormer)
+
 
 ### ⚡ Inference
 ● r2r & rxr
@@ -80,14 +86,11 @@ bash eval_ovon.sh
 ## 🏛️ Citation
 If you find this repository useful, please consider giving a star ⭐ and citation
 ```
-@misc{hu2025astranavworldworldmodelforesight,
-      title={AstraNav-World: World Model for Foresight Control and Consistency}, 
-      author={Junjun Hu and Jintao Chen and Haochen Bai and Minghua Luo and Shichao Xie and Ziyi Chen and Fei Liu and Zedong Chu and Xinda Xue and Botao Ren and Xiaolong Wu and Mu Xu and Shanghang Zhang},
-      year={2025},
-      eprint={2512.21714},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2512.21714}, 
+@article{hu2025astranav,
+  title={AstraNav-World: World Model for Foresight Control and Consistency},
+  author={Hu, Junjun and Chen, Jintao and Bai, Haochen and Luo, Minghua and Xie, Shichao and Chen, Ziyi and Liu, Fei and Chu, Zedong and Xue, Xinda and Ren, Botao and others},
+  journal={arXiv preprint arXiv:2512.21714},
+  year={2025}
 }
 @article{xue2025omninav,
   title={OmniNav: A Unified Framework for Prospective Exploration and Visual-Language Navigation},

@@ -25,10 +25,7 @@
 * January 21, 2026: We release the inference checkpoints of action former.
 * December 29, 2025: We release the inference code of action former for the R2R, RxR, and OVON benchmarks. 
 
-## Coming Soon
-* training of action former
-* inference of diffusion policy
-* training of diffusion policy
+
 
 ## Quickstart
 ### 🧰 Installation

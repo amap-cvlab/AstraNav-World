@@ -1,1 +1,1 @@
-from .citywalker_agent import Citywalker_Agent, QwenModel
+from .waypoint_agent import Waypoint_Agent, QwenModel

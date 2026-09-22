@@ -29,7 +29,7 @@ class ActionFormer(nn.Module):
                 num_heads=4,
                 batch_first=True)  
         else:
-            self.query_multihead_multi_attn = ActionFormerHead(hidden_dim=hidden_size, num_heads=4, num_blocks=config.query_action_layer)
+            self.query_multihead_multi_attn = ActionFormerHead(hidden_dim=hidden_size, num_heads=4, num_blocks=query_action_layer)
         self.query_action= nn.Parameter(torch.empty(1, waypoint_number, hidden_size))
 
 
@@ -54,4 +54,3 @@ class ActionFormer(nn.Module):
         arrive_pred = pred[:, :, -1]
         wp_pred = torch.cumsum(wp_pred, dim=1)
         return wp_pred,arrive_pred,sin_pred,cos_pred
-

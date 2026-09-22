@@ -55,11 +55,16 @@ def main():
         help="location to save results"
 
     )
+    from wan.future_frames import add_future_frame_arguments
+    add_future_frame_arguments(parser)
     args = parser.parse_args()
+    if args.predict_future_frames and not args.wan_model_path:
+        parser.error("--predict-future-frames requires --wan-model-path")
     run_exp(**vars(args))
 
 
-def run_exp(exp_config: str, split_num: str, split_id: str, model_path: str, result_path: str) -> None:
+def run_exp(exp_config: str, split_num: str, split_id: str, model_path: str, result_path: str,
+            predict_future_frames=False, wan_model_path=None) -> None:
     """Runs experiment given mode and config
 
     Args:
@@ -73,9 +78,10 @@ def run_exp(exp_config: str, split_num: str, split_id: str, model_path: str, res
     dataset = habitat.make_dataset(config.dataset.type, config=config.dataset)
 
     np.random.seed(42)
-    dataset_split = dataset.get_splits(split_num)[split_id]
+    dataset_split = dataset.get_splits(split_num, allow_uneven_splits=True)[split_id]
     with torch.no_grad():
-        evaluate_agent_ovon(config, split_id, dataset_split, model_path, result_path)
+        evaluate_agent_ovon(config, split_id, dataset_split, model_path, result_path,
+                            predict_future_frames=predict_future_frames, wan_model_path=wan_model_path)
 
 
 if __name__ == "__main__":

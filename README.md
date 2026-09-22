@@ -80,6 +80,10 @@ cd infer_ovon
 bash eval_ovon.sh
 ```
 
+With `PREDICT_FUTURE_FRAMES=true WAN_MODEL_PATH=/path/to/Wan2.2-TI2V-5B-Diffusers`,
+the evaluation scripts generate and save predictions to
+`<model-result-directory>/future_videos/<episode_id>/step_XXXX.mp4`. Future-frame prediction remains disabled by default.
+
 ## 🏛️ Citation
 If you find this repository useful, please consider giving a star ⭐ and citation
 ```
@@ -99,4 +103,3 @@ If you find this repository useful, please consider giving a star ⭐ and citati
 
 ## Acknowledgments
 Thanks to [OmniNav](https://github.com/amap-cvlab/OmniNav), [Navid](https://github.com/jzhzhang/NaVid-VLN-CE), [MTU3D](https://github.com/MTU3D/MTU3D), and [Ovon](https://github.com/naokiyokoyama/ovon) for open-sourcing the construction of training data and the closed-loop inference code. Their contributions have significantly enriched the open-source community.
-

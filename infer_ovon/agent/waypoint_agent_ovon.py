@@ -21,8 +21,9 @@ from copy import deepcopy
 from transformers import AutoProcessor, AutoTokenizer, AutoConfig, Qwen2VLForConditionalGeneration, \
     Qwen2_5_VLForConditionalGeneration, AutoModelForImageTextToText
 from qwen_vl_utils import process_vision_info
-from wan.models.action_former.transformer import WanTransformer3DModel
-from wan.models.lora import WanAttnProcessorLora
+from wan.future_frames import build_navigation_model
+from wan.checkpoint import resolve_checkpoint_paths
+from wan.eval_utils import episode_key, pending_dataset, write_result, save_future_video
 
 
 
@@ -58,13 +59,17 @@ def get_model_name_from_path(model_path):
     return '/'.join(model_path.split('/')[-3:])
 
 
-def evaluate_agent_ovon(config, split_id, dataset, model_path, result_path) -> None:
-    env = Env(config, dataset)
-    # obs = env.reset()
+def evaluate_agent_ovon(config, split_id, dataset, model_path, result_path,
+                        predict_future_frames=False, wan_model_path=None) -> None:
     model_name = get_model_name_from_path(model_path)
     result_path = os.path.join(result_path, model_name)
+    dataset = pending_dataset(dataset, result_path, include_scene=True)
+    if not dataset.episodes:
+        return
+    env = Env(config, dataset)
 
-    agent = Waypoint_Agent(model_path, result_path)
+    agent = Waypoint_Agent(model_path, result_path, predict_future_frames=predict_future_frames,
+                           wan_model_path=wan_model_path)
 
     num_episodes = len(env.episodes)
 
@@ -74,11 +79,10 @@ def evaluate_agent_ovon(config, split_id, dataset, model_path, result_path) -> N
     target_key = {"distance_to_goal", "success", "spl"}
 
     count = 0
-    is_collision = False
     for _ in trange(num_episodes, desc=config.EVAL.IDENTIFICATION + "-{}".format(split_id)):
         obs = env.reset()
-        scene_name = os.path.basename(env.current_episode.scene_id).split('.')[0]
-        env.current_episode.episode_id = f'{scene_name}_{env.current_episode.episode_id}'
+        episode_id = episode_key(env.current_episode, include_scene=True)
+        is_collision = False
         iter_step = 0
         agent.reset()
 
@@ -110,7 +114,7 @@ def evaluate_agent_ovon(config, split_id, dataset, model_path, result_path) -> N
                                         env._sim.get_agent_state().rotation.z]}
             obs["instruction"] = {"text": instruction}
             with torch.no_grad():
-                action = agent.act(obs, info, env.current_episode.episode_id)
+                action = agent.act(obs, info, episode_id)
             if MODEL_TYPE == 'Action' or MODEL_TYPE == 'ActionTrunk' or MODEL_TYPE == 'ActionTrunkV2':
                 if continuse_rotation_count > 0 and action['action'] == 1:
                     continuse_collision_count += 1
@@ -141,16 +145,15 @@ def evaluate_agent_ovon(config, split_id, dataset, model_path, result_path) -> N
             obs = env.step(action)
             iter_step += 1
         info = env.get_metrics()
+        is_collision = is_collision or bool((info.get('collisions') or {}).get('is_collision', False))
         result_dict = dict()
         result_dict = {k: info[k] for k in target_key if k in info}
         result_dict["is_collision"] = is_collision
-        result_dict["id"] = env.current_episode.episode_id
+        result_dict["id"] = episode_id
+        result_dict["instruction"] = instruction
         count += 1
 
-        with open(
-                os.path.join(os.path.join(result_path, "log"), "stats_{}.json".format(env.current_episode.episode_id)),
-                "w") as f:
-            json.dump(result_dict, f, indent=4)
+        write_result(os.path.join(result_path, "log", f"stats_{episode_id}.json"), result_dict)
 
 
 class QwenModel():
@@ -185,12 +188,7 @@ class QwenModel():
                 device_map="auto",
                 attn_implementation="flash_attention_2"
             )
-            # self.model = self.model.cuda()
-            for name in os.listdir(model_path):
-                if name.endswith('safetensors'):
-                    safe_model_path = os.path.join(model_path, name)
-                    state_dict = load_file(safe_model_path)
-                    self.model.load_state_dict(state_dict, strict=False)
+            # from_pretrained already loads the Qwen shards; exclude Wan checkpoint files.
 
     @staticmethod
     def qwen_data_pack(images, user_content):
@@ -242,6 +240,19 @@ class QwenModel():
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = self.processor(text=text, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
         inputs = inputs.to("cuda")
+        if return_vlm_output:
+            # Match the reference input length without truncating longer sequences.
+            pad_length = 4096 - inputs["input_ids"].shape[1]
+            if pad_length > 0:
+                pad_token_id = self.processor.tokenizer.pad_token_id
+                if pad_token_id is None:
+                    raise ValueError("ActionFormer input padding requires a pad_token_id")
+                for key, value in (("input_ids", pad_token_id), ("attention_mask", 0),
+                                   ("token_type_ids", 0)):
+                    if key in inputs:
+                        tensor = inputs[key]
+                        padding = tensor.new_full((tensor.shape[0], pad_length), value)
+                        inputs[key] = torch.cat((tensor, padding), dim=1)
         if not return_vlm_output:
             if flow_match == True:
                 norm = [{"min": [
@@ -269,7 +280,8 @@ class QwenModel():
 
 
 class Waypoint_Agent():
-    def __init__(self, model_path, result_path, require_map=True):
+    def __init__(self, model_path, result_path, require_map=True,
+                 predict_future_frames=False, wan_model_path=None):
 
         print("Initialize Qwen")
 
@@ -283,16 +295,13 @@ class Waypoint_Agent():
             os.makedirs(os.path.join(self.result_path, "map_vis"), exist_ok=True)
             os.makedirs(os.path.join(self.result_path, "render_img"), exist_ok=True)
 
-        self.model = QwenModel(model_path)
+        qwen_path, action_path = resolve_checkpoint_paths(model_path)
+        self.model = QwenModel(qwen_path)
 
-        self.dit_transformer = WanTransformer3DModel.from_pretrained("Wan-AI/Wan2.2-TI2V-5B")
-        self.dit_transformer.load_action_former(hidden_size=2048, query_action_layer=4, waypoint_number=5)
-        state_dict = torch.load(os.path.join(model_path, "transformer_modules.pth"))
-        self.dit_transformer.load_state_dict(state_dict, strict=False)
-        for block in self.dit_transformer.blocks:
-            del block
-        self.dit_transformer.to("cuda")
-        self.dit_transformer.eval()
+        self.dit_transformer, self.future_frame_predictor = build_navigation_model(
+            action_path, predict_future_frames=predict_future_frames, wan_model_path=wan_model_path,
+        )
+        self.future_frames = None
 
         if flow_match:
             self.promt_template = """You are an autonomous navigation robot. You will get a task with historical pictures and current pictures you see.
@@ -357,6 +366,8 @@ class Waypoint_Agent():
         return new_image
 
     def reset(self):
+        self.future_frames = None
+        self.wan_rgb_list = []
 
         if self.require_map:
             if len(self.topdown_map_list) != 0:
@@ -459,10 +470,14 @@ class Waypoint_Agent():
             pop_idx = [-1, -2]
             for idx in pop_idx:
                 self.rgb_list.pop(idx)
+                if self.future_frame_predictor is not None:
+                    self.wan_rgb_list.pop(idx)
                 self.pose_list.pop(idx)
                 self.image_indices.pop(idx)
 
         self.rgb_list.extend(rgbs_new)
+        if self.future_frame_predictor is not None:
+            self.wan_rgb_list.extend(image.copy() for image in rgbs_new)
         self.pose_list.extend([pose] * len(rgbs_new))
         self.image_indices.extend([self.total_frame_count] * len(rgbs_new))
         self.total_frame_count += 1
@@ -475,6 +490,8 @@ class Waypoint_Agent():
             # 基于self.image_indices 移除第一个间距最小的帧
             min_interval_idx = np.argmin(np.diff(self.image_indices[:-NUM_CURRENT_IMAGE]))
             self.rgb_list.pop(min_interval_idx + 1)
+            if self.future_frame_predictor is not None:
+                self.wan_rgb_list.pop(min_interval_idx + 1)
             self.pose_list.pop(min_interval_idx + 1)
             self.image_indices.pop(min_interval_idx + 1)
 
@@ -548,6 +565,12 @@ class Waypoint_Agent():
         # wp_pred_, src_arrive_pred, sin_angle, cos_angle = self.model.qwen_infer(navigation_qs)
         visual_language_emb = self.model.qwen_infer(navigation_qs, return_vlm_output=True)
         wp_pred_, src_arrive_pred, sin_angle, cos_angle = self.dit_transformer.action_former(visual_language_emb)
+        wp_pred_ = wp_pred_ * PREDICT_SCALE
+        if self.future_frame_predictor is not None:
+            # OVON stores left/front/right; the shared predictor expects left/right/front.
+            frames = self.wan_rgb_list[:-3] + [self.wan_rgb_list[-3], self.wan_rgb_list[-1], self.wan_rgb_list[-2]]
+            self.future_frames = self.future_frame_predictor.predict(frames, visual_language_emb)
+            save_future_video(self.future_frames, self.result_path, episode_id, self.total_frame_count - 1)
 
         end_time = time.time()
         print(f"qwen_infer 耗时: {end_time - start_time} 秒")

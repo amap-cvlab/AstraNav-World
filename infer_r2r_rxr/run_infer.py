@@ -5,6 +5,7 @@ import torch
 from habitat.datasets import make_dataset
 from VLN_CE.vlnce_baselines.config.default import get_config
 from agent.waypoint_agent import evaluate_agent
+from wan.future_frames import add_future_frame_arguments
 
 
 def main():
@@ -29,7 +30,7 @@ def main():
         "--split-id",
         type=int,
         required=False,
-        default=1,
+        default=0,
         help="chunks ID of evluation"
 
     )
@@ -52,11 +53,15 @@ def main():
 
     )
 
+    add_future_frame_arguments(parser)
     args = parser.parse_args()
+    if args.predict_future_frames and not args.wan_model_path:
+        parser.error("--predict-future-frames requires --wan-model-path")
     run_exp(**vars(args))
 
 
-def run_exp(exp_config: str, split_num: str, split_id: str, model_path: str, result_path: str, opts=None) -> None:
+def run_exp(exp_config: str, split_num: str, split_id: str, model_path: str, result_path: str, opts=None,
+            predict_future_frames=False, wan_model_path=None) -> None:
     """Runs experiment given mode and config
 
     Args:
@@ -71,9 +76,10 @@ def run_exp(exp_config: str, split_num: str, split_id: str, model_path: str, res
     dataset.episodes.sort(key=lambda ep: ep.episode_id)
     
     np.random.seed(42)
-    dataset_split = dataset.get_splits(split_num)[split_id]
+    dataset_split = dataset.get_splits(split_num, allow_uneven_splits=True)[split_id]
     with torch.no_grad():
-        evaluate_agent(config, split_id, dataset_split, model_path, result_path)
+        evaluate_agent(config, split_id, dataset_split, model_path, result_path,
+                       predict_future_frames=predict_future_frames, wan_model_path=wan_model_path)
 
 
 if __name__ == "__main__":

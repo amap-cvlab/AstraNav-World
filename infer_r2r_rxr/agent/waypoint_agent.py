@@ -3,6 +3,7 @@ import json
 import numpy as np
 
 try:
+    import habitat_sim
     from habitat import Env
     from habitat.core.agent import Agent
     import imageio
@@ -23,8 +24,8 @@ from copy import deepcopy
 from transformers import AutoProcessor, AutoTokenizer, AutoConfig, Qwen2VLForConditionalGeneration, \
     Qwen2_5_VLForConditionalGeneration, AutoModelForImageTextToText
 from qwen_vl_utils import process_vision_info
-from wan.models.action_former.transformer import WanTransformer3DModel
-from wan.models.lora import WanAttnProcessorLora
+from wan.future_frames import build_navigation_model
+from wan.eval_utils import pending_dataset, write_result, save_future_video
 
 SAVE_RANDER_IMG = True
 PREDICT_SCALE = 0.3
@@ -43,13 +44,20 @@ def get_model_name_from_path(model_path):
     return '/'.join(model_path.split('/')[-3:])
 
 
-def evaluate_agent(config, split_id, dataset, model_path, result_path) -> None:
-    env = Env(config.TASK_CONFIG, dataset)
+from wan.checkpoint import resolve_checkpoint_paths, load_action_former_checkpoint
 
+
+def evaluate_agent(config, split_id, dataset, model_path, result_path,
+                   predict_future_frames=False, wan_model_path=None) -> None:
     model_name = get_model_name_from_path(model_path)
     result_path = os.path.join(result_path, model_name)
+    dataset = pending_dataset(dataset, result_path)
+    if not dataset.episodes:
+        return
+    env = Env(config.TASK_CONFIG, dataset)
 
-    agent = Waypoint_Agent(model_path, result_path)
+    agent = Waypoint_Agent(model_path, result_path, predict_future_frames=predict_future_frames,
+                           wan_model_path=wan_model_path)
 
     num_episodes = len(env.episodes)
 
@@ -60,8 +68,28 @@ def evaluate_agent(config, split_id, dataset, model_path, result_path) -> None:
 
     count = 0
 
+    loaded_scene_id = None
+    target_navmesh_scene = "oLBMNvg9in8"
     for _ in trange(num_episodes, desc=config.EVAL.IDENTIFICATION + "-{}".format(split_id)):
         obs = env.reset()
+        current_scene_id = env.current_episode.scene_id
+        if current_scene_id != loaded_scene_id:
+            if target_navmesh_scene in current_scene_id:
+                navmesh_settings = habitat_sim.NavMeshSettings()
+                navmesh_settings.set_defaults()
+                navmesh_settings.cell_height = 0.1
+                navmesh_success = env._sim.recompute_navmesh(
+                    env._sim.pathfinder, navmesh_settings,
+                )
+                if not navmesh_success:
+                    raise RuntimeError(
+                        f"NavMesh rebuild failed for {current_scene_id} (cell_height=0.1)"
+                    )
+                print(
+                    f"[NAVMESH_OVERRIDE] scene={current_scene_id} "
+                    f"cell_height=0.1 success={navmesh_success}"
+                )
+            loaded_scene_id = current_scene_id
         iter_step = 0
         agent.reset()
 
@@ -116,10 +144,7 @@ def evaluate_agent(config, split_id, dataset, model_path, result_path) -> None:
         result_dict["id"] = env.current_episode.episode_id
         count += 1
 
-        with open(
-                os.path.join(os.path.join(result_path, "log"), "stats_{}.json".format(env.current_episode.episode_id)),
-                "w") as f:
-            json.dump(result_dict, f, indent=4)
+        write_result(os.path.join(result_path, "log", f"stats_{env.current_episode.episode_id}.json"), result_dict)
 
 
 class QwenModel():
@@ -133,20 +158,8 @@ class QwenModel():
             device_map="auto",
             attn_implementation="flash_attention_2"
         )
-        if flow_match:
-            self.model = self.model.cuda()
-            for name in os.listdir(model_path):
-                if name.endswith('safetensors'):
-                    safe_model_path = os.path.join(model_path, name)
-                    state_dict = load_file(safe_model_path)
-                    self.model.load_state_dict(state_dict, strict=False)
-        else:
-            self.model = self.model.cuda()
-            for name in os.listdir(model_path):
-                if name.endswith('safetensors'):
-                    safe_model_path = os.path.join(model_path, name)
-                    state_dict = load_file(safe_model_path)
-                    self.model.load_state_dict(state_dict, strict=False)
+        # from_pretrained loads Qwen shards; do not load action-module files into Qwen.
+        self.model = self.model.cuda()
 
     @staticmethod
     def qwen_data_pack(images, user_content):
@@ -198,6 +211,19 @@ class QwenModel():
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = self.processor(text=text, images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
         inputs = inputs.to("cuda")
+        if return_vlm_output:
+            # Match the reference ActionFormer input; do not truncate longer sequences.
+            pad_length = 4096 - inputs["input_ids"].shape[1]
+            if pad_length > 0:
+                pad_token_id = self.processor.tokenizer.pad_token_id
+                if pad_token_id is None:
+                    raise ValueError("ActionFormer input padding requires a pad_token_id")
+                for key, value in (("input_ids", pad_token_id), ("attention_mask", 0),
+                                   ("token_type_ids", 0)):
+                    if key in inputs:
+                        tensor = inputs[key]
+                        padding = tensor.new_full((tensor.shape[0], pad_length), value)
+                        inputs[key] = torch.cat((tensor, padding), dim=1)
         if not return_vlm_output:
             if flow_match == True:
                 norm = [{"min": [
@@ -225,7 +251,8 @@ class QwenModel():
 
 
 class Waypoint_Agent():
-    def __init__(self, model_path, result_path, require_map=True):
+    def __init__(self, model_path, result_path, require_map=True,
+                 predict_future_frames=False, wan_model_path=None):
 
         print("Initialize Qwen")
 
@@ -240,16 +267,14 @@ class Waypoint_Agent():
             os.makedirs(os.path.join(self.result_path, "render_img"), exist_ok=True)
 
         print("good")
-        self.model = QwenModel(model_path)
+        qwen_path, action_path = resolve_checkpoint_paths(model_path)
+        print(f"[Checkpoint] Qwen={qwen_path}, ActionFormer={action_path}")
+        self.model = QwenModel(qwen_path)
 
-        self.dit_transformer = WanTransformer3DModel.from_pretrained("Wan-AI/Wan2.2-TI2V-5B")
-        self.dit_transformer.load_action_former(hidden_size=2048, query_action_layer=4, waypoint_number=5)
-        state_dict = torch.load(os.path.join(model_path, "transformer_modules.pth"))
-        self.dit_transformer.load_state_dict(state_dict, strict=False)
-        for block in self.dit_transformer.blocks:
-            del block
-        self.dit_transformer.to("cuda")
-        self.dit_transformer.eval()
+        self.dit_transformer, self.future_frame_predictor = build_navigation_model(
+            action_path, predict_future_frames=predict_future_frames, wan_model_path=wan_model_path,
+        )
+        self.future_frames = None
 
         self.promt_template = "\n{instruction}"
         if flow_match:
@@ -260,10 +285,10 @@ Based on these information, you need to decide your next {num_action_trunck} act
 # Your mission is: {instruction}<|NAV|>"""
         else:
             self.promt_template = """You are an autonomous navigation robot. You will get a task with historical pictures and current pictures you see.
-Based on these information, you need to decide your next {num_action_trunck} actions, which could involve <|left|>,<|right|>,<|forward|>. If you finish your mission, output <|stop|>. Here are some examples: <|left|><|forward|><|forward|><|stop|>, <|forward|><|forward|><|forward|><|left|><|forward|> or <|stop|>
-# Your historical pictures are: {history_img_string}
-# {current_img_string}
-# Your mission is: {instruction}<|NAV|>\nOutput the waypoint"""
+    Based on these information, you need to decide your next {num_action_trunck} actions, which could involve <|left|>,<|right|>,<|forward|>. If you finish your mission, output <|stop|>. Here are some examples: <|left|><|forward|><|forward|><|stop|>, <|forward|><|forward|><|forward|><|left|><|forward|> or <|stop|>
+    # Your historical pictures are: {history_img_string}
+    # {current_img_string}
+    # Your mission is: {instruction}<|NAV|>\nOutput the waypoint"""
         print("Initialization Complete")
 
         self.history_rgb_tensor = None
@@ -312,6 +337,8 @@ Based on these information, you need to decide your next {num_action_trunck} act
         return new_image
 
     def reset(self):
+        self.future_frames = None
+        self.wan_rgb_list = []
 
         if self.require_map:
             if len(self.topdown_map_list) != 0:
@@ -414,6 +441,8 @@ Based on these information, you need to decide your next {num_action_trunck} act
             # 历史帧只保留front
             for _ in range(NUM_CURRENT_IMAGE - 1):
                 self.rgb_list.pop(-2)
+                if self.future_frame_predictor is not None:
+                    self.wan_rgb_list.pop(-2)
                 self.pose_list.pop(-2)
                 self.image_indices.pop(-2)
             # pop_idx = [-1, -2]
@@ -423,6 +452,8 @@ Based on these information, you need to decide your next {num_action_trunck} act
             #     self.image_indices.pop(idx)
 
         self.rgb_list.extend(rgbs_new)
+        if self.future_frame_predictor is not None:
+            self.wan_rgb_list.extend(image.copy() for image in rgbs_new)
         self.pose_list.extend([pose] * len(rgbs_new))
         self.image_indices.extend([self.total_frame_count] * len(rgbs_new))
         self.total_frame_count += 1
@@ -435,6 +466,8 @@ Based on these information, you need to decide your next {num_action_trunck} act
             # 基于self.image_indices 移除第一个间距最小的帧
             min_interval_idx = np.argmin(np.diff(self.image_indices[:-NUM_CURRENT_IMAGE]))
             self.rgb_list.pop(min_interval_idx + 1)
+            if self.future_frame_predictor is not None:
+                self.wan_rgb_list.pop(min_interval_idx + 1)
             self.pose_list.pop(min_interval_idx + 1)
             self.image_indices.pop(min_interval_idx + 1)
 
@@ -497,7 +530,19 @@ Based on these information, you need to decide your next {num_action_trunck} act
         print("question")
         print(navigation_qs)
         visual_language_emb = self.model.qwen_infer(navigation_qs, return_vlm_output=True)
+        action_former_parameter = next(self.dit_transformer.action_former.parameters())
+        if (visual_language_emb.device != action_former_parameter.device
+                or visual_language_emb.dtype != action_former_parameter.dtype):
+            raise RuntimeError(
+                "VLM embedding and ActionFormer must have matching device and dtype: "
+                f"embedding={visual_language_emb.device}/{visual_language_emb.dtype}, "
+                f"action_former={action_former_parameter.device}/{action_former_parameter.dtype}"
+            )
         wp_pred_, src_arrive_pred, sin_angle, cos_angle = self.dit_transformer.action_former(visual_language_emb)
+        wp_pred_ = wp_pred_ * PREDICT_SCALE
+        if self.future_frame_predictor is not None:
+            self.future_frames = self.future_frame_predictor.predict(self.wan_rgb_list, visual_language_emb)
+            save_future_video(self.future_frames, self.result_path, episode_id, self.total_frame_count - 1)
 
 
         end_time = time.time()

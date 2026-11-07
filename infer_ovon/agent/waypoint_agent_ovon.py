@@ -6,7 +6,7 @@ try:
     from habitat.core.agent import Agent
     import imageio
     from habitat.utils.visualizations import maps
-except:
+except ImportError:
     pass
 from tqdm import trange
 import os
